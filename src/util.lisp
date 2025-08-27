@@ -48,3 +48,10 @@
                     :output :string
                     :error-output :string
                     :ignore-error-status t))
+
+(defun sudo (&rest args)
+  "Runs sudo -n <args>, returns stdout, strderr, exit code"
+  (uiop:run-program (append '("sudo" "-n") args)
+                    :ouptut :string
+                    :error-output :string
+                    :ignore-error-status t))
