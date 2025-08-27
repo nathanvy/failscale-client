@@ -16,7 +16,7 @@
       (unless (zerop code) (error "wg pubkey failed"))
       (string-trim '(#\Newline #\Return) out))))
 
-(defun render-wg-config (iface self-addr-v4 listen-port priv-b64 peers)
+(defun render-wg-config (self-addr-v4 listen-port peers)
   "Peers = vector/list of hash-tables with keys (addr_v4 wg_pub endpoint keepalive)."
   (with-output-to-string (s)
     (format s "[Interface]~%")
@@ -36,17 +36,24 @@
         (when ep   (format s "Endpoint = ~A~%" ep))
         (format s "PersistentKeepalive = ~D~%~%" ka)))))
 
-(defun apply-wg-config (iface cfg-path)
-  "Bounce interface using wg-quick with the given config path."
-  ;; Try wg-quick up; if already up, down+up.
-  (multiple-value-bind (_o _e code)
-      (run "wg-quick" "up" (namestring cfg-path))
-    (declare (ignore _o _e))
-    (unless (zerop code)
-      (run "wg-quick" "down" (namestring cfg-path))
-      (multiple-value-bind (_o2 e2 code2)
-          (run "wg-quick" "up" (namestring cfg-path))
-        (declare (ignore _o2))
-        (unless (zerop code2)
-          (error "wg-quick up failed: ~A" e2)))))
-  (values))
+(defun apply-wg-config (iface cfg-path &key (prefer-syncconf t))
+  "If IFACE exists → sudo wg syncconf; else → sudo wg-quick up."
+  (labels ((die (code err)
+             (error "sudo wg apply failed (exit ~a): ~a" code (string-right-trim '(#\Newline #\Return) err))))
+    ;;does interface already exist?
+    (multiple-value-bind (o err code) (sudo "wg" "show" iface)
+      (declare (ignore o err))
+      (cond
+        ;; exists → syncconf for zero-bounce updates
+        ((and (zerop code) prefer-syncconf)
+         (multiple-value-bind (o2 err2 code2)
+             (sudo "wg" "syncconf" iface (namestring cfg-path))
+           (declare (ignore o2))
+           (unless (zerop code2) (die code2 err2))))
+        ;; missing → bring it up (sets Address/ListenPort/routes from the conf)
+        (t
+         (multiple-value-bind (o3 err3 code3)
+             (sudo "wg-quick" "up" (namestring cfg-path))
+           (declare (ignore o3))
+           (unless (zerop code3) (die code3 err3))))))))
+
